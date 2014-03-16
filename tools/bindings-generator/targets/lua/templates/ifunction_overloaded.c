@@ -2,7 +2,7 @@
 int ${signature_name}(lua_State* tolua_S)
 {
     int argc = 0;
-    ${namespaced_class_name}* cobj = NULL;
+    ${namespaced_class_name}* cobj = nullptr;
     bool ok  = true;
 \#if COCOS2D_DEBUG >= 1
     tolua_Error tolua_err;
@@ -16,7 +16,7 @@ int ${signature_name}(lua_State* tolua_S)
 \#if COCOS2D_DEBUG >= 1
     if (!cobj)
     {
-        tolua_error(tolua_S,"invalid 'cobj' in function '${signature_name}'", NULL);
+        tolua_error(tolua_S,"invalid 'cobj' in function '${signature_name}'", nullptr);
         return 0;
     }
 \#endif
@@ -57,19 +57,15 @@ int ${signature_name}(lua_State* tolua_S)
         #if $is_constructor
             cobj = new ${namespaced_class_name}($arg_list);
 #if not $generator.script_control_cpp
-            cocos2d::Object* dynObject = dynamic_cast<cocos2d::Object *>(cobj);
-            if (NULL != dynObject) 
-            {
-                dynObject->autorelease();
-                int ID =  (int)dynObject->_ID ;
-                int* luaID =  &dynObject->_luaID ;
-                toluafix_pushusertype_ccobject(tolua_S, ID, luaID, (void*)cobj,"${generator.scriptname_from_native($namespaced_class_name)}");
-            }
-            else
-            {
-                tolua_pushusertype(tolua_S,(void*)cobj,"${generator.scriptname_from_native($namespaced_class_name)}");
-                tolua_register_gc(tolua_S,lua_gettop(tolua_S));
-            }
+        #if $is_ref_class
+            cobj->autorelease();
+            int ID =  (int)cobj->_ID ;
+            int* luaID =  &cobj->_luaID ;
+            toluafix_pushusertype_ccobject(tolua_S, ID, luaID, (void*)cobj,"${generator.scriptname_from_native($namespaced_class_name)}");
+        #else
+            tolua_pushusertype(tolua_S,(void*)cobj,"${generator.scriptname_from_native($namespaced_class_name)}");
+            tolua_register_gc(tolua_S,lua_gettop(tolua_S));
+        #end if
 #else
             tolua_pushusertype(tolua_S,(void*)cobj,"${generator.scriptname_from_native($namespaced_class_name)}");
             tolua_register_gc(tolua_S,lua_gettop(tolua_S));

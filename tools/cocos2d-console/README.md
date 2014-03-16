@@ -24,24 +24,19 @@ This command line tool is in its early stages.
 Examples:
 
 ```
-# starts a new project called "My Game" for iOS and Android with JS Bindigns
-$ cocos2d new "My Game" --mobile --js
+# starts a new project called "My Game" for multi-platform
+
+$ cocos new "My Game" -l cpp -p org.cocos2d.mygame
 
 $ cd "My Game"
 
-# Will compile the source code, publish the assests, and then it will send the binary to the simulator
-$ cocos2d run --ios
+# Will compile the current project to binary
+$ cocos compile -p android -m debug
 
 
-# Will generate a distribution .ipa file ready to be summitted to the App Store
-$ cocos2d dist --ios
+# Will deploy the project to device and run it
+$ cocos run -p android
 
-
-# Will generate published files
-$ cocos2d.py publish --ios
-
-# Will generate bytecode files
-$ cocos2d jscompile -d output_dir -s cocos2dx_root/scripting/javascript/bindings/js -s cocos2dx_root/samples/Javascript/Shared/tests -o game.min.js -j compiler_config_sample.json -c
 
 ```
 
@@ -49,51 +44,62 @@ $ cocos2d jscompile -d output_dir -s cocos2dx_root/scripting/javascript/bindings
 
 ## Internals
 
-`cocos2d.py` is an script whose only responsability is to call its plugins.
+`cocos.py` is an script whose only responsability is to call its plugins.
 
-eg:
-```
-// It will just print all the registered plugins
-$ python cocos2d.py
-```
+To get a list of all the registered plugins:
 
 ```
-// It will call the "new" plugin 
-$ python cocos2d.py new
+$ python cocos.py
+```
+
+To run the "new" plugin:
+
+```
+$ python cocos.py new
 ``` 
 
-```
-// It will call the "dist" plugin with the --help argument 
-$ python cocos2d.py dist --help
-``` 
+## Adding a new plugin to the console
 
+You have to edit `bin/cocos2d.ini`, and add the class name of your new plugin there. Let's say that you want to add a plugin that deploys the project:
 
-## Adding new plugin to the console
-
-You have to edit the `cocos2d.ini` file, and add your new plugin there.
-
-Let's say that you want to add a plugin that minifies JS code.
 
 ```
-# Adds the minify_js plugin
-[plugin "minify_js"]
 # should be a subclass of CCPlugin
-class = cocos2d_minify_js.CCPluginMinifyJS
+project_deploy.CCPluginDeploy
 ``` 
 
-And now you have to create a file called `cocos2d_minify_js.py` with the following structure.
+And now you have to create a file called `project_deploy.py` in the `plugins` folder.
+A new, empty plugin, would look like the code shown below:
 
 ```python
-import cocos2d
+import cocos
 
 # Plugins should be a sublass of CCPlugin
-class CCPluginMinifyJS(cocos2d.CCPlugin):
+class CCPluginDeploy(cocos.CCPlugin):
 
-    @staticmethod
-    def brief_description():
-        return "minify_js\t\tminifies JS code"
+		# in default category
+        @staticmethod
+        def plugin_category():
+          return ""
 
-    def run(self, argv):
-        print "plugin called!"
-        print argv
+        @staticmethod
+        def plugin_name():
+          return "deploy"
+
+        @staticmethod
+        def brief_description():
+            return "Deploy the project to target."                
+
+        def run(self, argv, dependencies):
+            print "plugin called!"
+            print argv
+
 ```
+
+Plugins are divided by category, depending on it's function: project, engine, ...
+
+The plugins of `project` is in default category, it's an empty stirng `""`.
+
+# Comands Required
+
+Please see this [issue](https://github.com/cocos2d/cocos2d-console/issues/27)
