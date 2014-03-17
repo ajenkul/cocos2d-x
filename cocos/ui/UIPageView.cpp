@@ -502,7 +502,7 @@ void PageView::handleReleaseLogic(const Point &touchPoint)
         ssize_t pageCount = _pages.size();
         float curPageLocation = curPagePos.x;
         float pageWidth = getSize().width;
-        float boundary = pageWidth/2.0f;
+        float boundary = pageWidth / 10.0f;
         if (curPageLocation <= -boundary)
         {
             if (_curPageIdx >= pageCount-1)
