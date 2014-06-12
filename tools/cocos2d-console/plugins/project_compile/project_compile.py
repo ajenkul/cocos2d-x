@@ -13,6 +13,7 @@
 __docformat__ = 'restructuredtext'
 
 import cocos
+import cocos_project
 import subprocess
 import os
 import re
@@ -23,96 +24,6 @@ import json
 import build_web
 if sys.platform == 'win32':
     import _winreg
-
-
-def copy_files_in_dir(src, dst):
-
-    for item in os.listdir(src):
-        path = os.path.join(src, item)
-        if os.path.isfile(path):
-            shutil.copy(path, dst)
-        if os.path.isdir(path):
-            new_dst = os.path.join(dst, item)
-            if not os.path.isdir(new_dst):
-                os.makedirs(new_dst)
-            copy_files_in_dir(path, new_dst)
-
-def copy_files_with_config(config, src_root, dst_root):
-    src_dir = config["from"]
-    dst_dir = config["to"]
-
-    src_dir = os.path.join(src_root, src_dir)
-    dst_dir = os.path.join(dst_root, dst_dir)
-
-    include_rules = None
-    if config.has_key("include"):
-        include_rules = config["include"]
-        include_rules = convert_rules(include_rules)
-
-    exclude_rules = None
-    if config.has_key("exclude"):
-        exclude_rules = config["exclude"]
-        exclude_rules = convert_rules(exclude_rules)
-
-    copy_files_with_rules(src_dir, src_dir, dst_dir, include_rules, exclude_rules)
-
-def copy_files_with_rules(src_rootDir, src, dst, include = None, exclude = None):
-    if os.path.isfile(src):
-        if not os.path.exists(dst):
-            os.makedirs(dst)
-        shutil.copy(src, dst)
-        return
-
-    if (include is None) and (exclude is None):
-        if not os.path.exists(dst):
-            os.makedirs(dst)
-        copy_files_in_dir(src, dst)
-    elif (include is not None):
-        # have include
-        for name in os.listdir(src):
-            abs_path = os.path.join(src, name)
-            rel_path = os.path.relpath(abs_path, src_rootDir)
-            if os.path.isdir(abs_path):
-                sub_dst = os.path.join(dst, name)
-                copy_files_with_rules(src_rootDir, abs_path, sub_dst, include = include)
-            elif os.path.isfile(abs_path):
-                if _in_rules(rel_path, include):
-                    if not os.path.exists(dst):
-                        os.makedirs(dst)
-                    shutil.copy(abs_path, dst)
-    elif (exclude is not None):
-        # have exclude
-        for name in os.listdir(src):
-            abs_path = os.path.join(src, name)
-            rel_path = os.path.relpath(abs_path, src_rootDir)
-            if os.path.isdir(abs_path):
-                sub_dst = os.path.join(dst, name)
-                copy_files_with_rules(src_rootDir, abs_path, sub_dst, exclude = exclude)
-            elif os.path.isfile(abs_path):
-                if not _in_rules(rel_path, exclude):
-                    if not os.path.exists(dst):
-                        os.makedirs(dst)
-                    shutil.copy(abs_path, dst)
-
-def _in_rules(rel_path, rules):
-    import re
-    ret = False
-    path_str = rel_path.replace("\\", "/")
-    for rule in rules:
-        if re.match(rule, path_str):
-            ret = True
-
-    return ret
-
-def convert_rules(rules):
-    ret_rules = []
-    for rule in rules:
-        ret = rule.replace('.', '\\.')
-        ret = ret.replace('*', '.*')
-        ret = "%s" % ret
-        ret_rules.append(ret)
-
-    return ret_rules
 
 class CCPluginCompile(cocos.CCPlugin):
     """
@@ -147,6 +58,7 @@ class CCPluginCompile(cocos.CCPlugin):
 
         group = parser.add_argument_group("Android Options")
         group.add_argument("--ap", dest="android_platform", type=int, help='parameter for android-update.Without the parameter,the script just build dynamic library for project. Valid android-platform are:[10|11|12|13|14|15|16|17|18|19]')
+        group.add_argument("--ndk-mode", dest="ndk_mode", help='Set the compile mode of ndk-build, should be debug|release|none, native code will not be compiled when the value is none. Default is same value with -m')
 
         group = parser.add_argument_group("Web Options")
         group.add_argument("--source-map", dest="source_map", action="store_true", help='Enable source-map')
@@ -169,11 +81,43 @@ class CCPluginCompile(cocos.CCPlugin):
         if 'release' == args.mode:
             self._mode = args.mode
 
+        if args.ndk_mode is not None:
+            self._ndk_mode = args.ndk_mode
+        else:
+            self._ndk_mode = self._mode
+
         self._ap = args.android_platform
         self._jobs = args.jobs
 
         self._has_sourcemap = args.source_map
         self._no_res = args.no_res
+        self._output_dir = self._get_output_dir()
+
+        self._gen_custom_step_args()
+
+    def _get_output_dir(self):
+        project_dir = self._project.get_project_dir()
+        cur_platform = self._platforms.get_current_platform()
+        if self._project._is_script_project():
+            if self._mode == 'debug':
+                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_DEBUG, cur_platform)
+            else:
+                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_RELEASE, cur_platform)
+        else:
+            output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_RELEASE, cur_platform)
+
+        return output_dir
+
+    def _gen_custom_step_args(self):
+        self._custom_step_args = {
+            "project-path": self._project.get_project_dir(),
+            "platform-project-path": self._platforms.project_path(),
+            "build-mode": self._mode,
+            "output-dir": self._output_dir
+        }
+
+        if self._platforms.is_android_active():
+            self._custom_step_args["ndk-build-mode"] = self._ndk_mode
 
     def _build_cfg_path(self):
         cur_cfg = self._platforms.get_current_config()
@@ -288,38 +232,38 @@ class CCPluginCompile(cocos.CCPlugin):
 
         project_dir = self._project.get_project_dir()
         build_mode = self._mode
+        output_dir = self._output_dir
         if self._project._is_script_project():
-            if build_mode == 'debug':
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_DEBUG, 'android')
-            else:
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_RELEASE, 'android')
-
             if self._project._is_lua_project():
                 cocos_root = os.path.join(project_dir, 'frameworks' ,'cocos2d-x')
             else:
                 cocos_root = os.path.join(project_dir, 'frameworks' ,'%s-bindings' % self._project.get_language(), 'cocos2d-x')
-
         else:
             cocos_root = os.path.join(project_dir, 'cocos2d')
-            output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_NATIVE, build_mode, 'android')
 
         # check environment variable
         ant_root = cocos.check_environment_variable('ANT_ROOT')
-        ndk_root = cocos.check_environment_variable('NDK_ROOT')
         sdk_root = cocos.check_environment_variable('ANDROID_SDK_ROOT')
         project_android_dir = self._platforms.project_path()
 
         from build_android import AndroidBuilder
-        builder = AndroidBuilder(self._verbose, cocos_root, project_android_dir, self._no_res)
+        builder = AndroidBuilder(self._verbose, cocos_root, project_android_dir, self._no_res, self._project)
 
-        # build native code
-        cocos.Logging.info("building native")
-        ndk_build_param = "-j%s" % self._jobs
-        builder.do_ndk_build(ndk_root, ndk_build_param, build_mode)
+        args_ndk_copy = self._custom_step_args.copy()
+        target_platform = self._platforms.get_current_platform()
+
+        if not self._project._is_script_project() or self._project._is_native_support():
+            if self._ndk_mode != "none":
+                # build native code
+                cocos.Logging.info("building native")
+                ndk_build_param = "-j%s" % self._jobs
+                self._project.invoke_custom_step_script(cocos_project.Project.CUSTOM_STEP_PRE_NDK_BUILD, target_platform, args_ndk_copy)
+                builder.do_ndk_build(ndk_build_param, self._ndk_mode)
+                self._project.invoke_custom_step_script(cocos_project.Project.CUSTOM_STEP_POST_NDK_BUILD, target_platform, args_ndk_copy)
 
         # build apk
         cocos.Logging.info("building apk")
-        self.apk_path = builder.do_build_apk(sdk_root, ant_root, self._ap, build_mode, output_dir) 
+        self.apk_path = builder.do_build_apk(sdk_root, ant_root, self._ap, build_mode, output_dir, self._custom_step_args)
 
         cocos.Logging.info("build succeeded.")
 
@@ -397,16 +341,8 @@ class CCPluginCompile(cocos.CCPlugin):
 
         self.check_ios_mac_build_depends()
 
-        project_dir = self._project.get_project_dir()
         ios_project_dir = self._platforms.project_path()
-        build_mode = self._mode
-        if self._project._is_script_project():
-            if build_mode == 'debug':
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_DEBUG, 'ios')
-            else:
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_RELEASE, 'ios')
-        else:
-            output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_NATIVE, build_mode, 'ios')
+        output_dir = self._output_dir
 
         projectPath = os.path.join(ios_project_dir, self.xcodeproj_name)
         pbxprojectPath = os.path.join(projectPath, "project.pbxproj")
@@ -490,17 +426,8 @@ class CCPluginCompile(cocos.CCPlugin):
 
         self.check_ios_mac_build_depends()
 
-        project_dir = self._project.get_project_dir()
         mac_project_dir = self._platforms.project_path()
-        build_mode = self._mode
-        if self._project._is_script_project():
-            if build_mode == 'debug':
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_DEBUG, 'mac')
-            else:
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_RELEASE, 'mac')
-        else:
-            output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_NATIVE, build_mode, 'mac')
-
+        output_dir = self._output_dir
 
         projectPath = os.path.join(mac_project_dir, self.xcodeproj_name)
         pbxprojectPath = os.path.join(projectPath, "project.pbxproj")
@@ -557,6 +484,7 @@ class CCPluginCompile(cocos.CCPlugin):
 
         self._run_cmd(command)
 
+        self.target_name = targetName
         filelist = os.listdir(output_dir)
         for filename in filelist:
             name, extention = os.path.splitext(filename)
@@ -577,6 +505,28 @@ class CCPluginCompile(cocos.CCPlugin):
 
         cocos.Logging.info("build succeeded.")
 
+    def _get_required_vs_version(self, proj_file):
+        # get the VS version required by the project
+        file_obj = open(proj_file)
+        pattern = re.compile(r"^# Visual Studio (\d{4})")
+        num = None
+        for line in file_obj:
+            match = pattern.match(line)
+            if match is not None:
+                num = match.group(1)
+                break
+
+        if num is not None:
+            if num == "2012":
+                ret = "11.0"
+            elif num == "2013":
+                ret = "12.0"
+            else:
+                ret = None
+        else:
+            ret = None
+
+        return ret
 
     def build_win32(self):
         if not self._platforms.is_win32_active():
@@ -585,79 +535,26 @@ class CCPluginCompile(cocos.CCPlugin):
         if not cocos.os_is_win32():
             raise cocos.CCPluginError("Please build on winodws")
 
-        project_dir = self._project.get_project_dir()
         win32_projectdir = self._platforms.project_path()
-        build_mode = self._mode
-        if self._project._is_script_project():
-            if build_mode == 'debug':
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_DEBUG, 'win32')
-            else:
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_RELEASE, 'win32')
-        else:
-            output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_NATIVE, build_mode, 'win32')
+        output_dir = self._output_dir
 
         cocos.Logging.info("building")
+        # find the VS in register
         try:
             vs = _winreg.OpenKey(
                 _winreg.HKEY_LOCAL_MACHINE,
                 r"SOFTWARE\Microsoft\VisualStudio"
             )
 
-            msbuild = _winreg.OpenKey(
-                _winreg.HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\Microsoft\MSBuild\ToolsVersions"
-            )
-
         except WindowsError:
             message = "Visual Studio wasn't installed"
             raise cocos.CCPluginError(message)
 
-        vsPath = None
-        i = 0
-        try:
-            while True:
-                version = _winreg.EnumKey(vs, i)
-                try:
-                    if float(version) >= 11.0:
-                        key = _winreg.OpenKey(vs, r"SxS\VS7")
-                        vsPath,type = _winreg.QueryValueEx(key, version)
-                except:
-                    pass
-                i += 1
-        except WindowsError:
-            pass
-
-        if vsPath is None:
-            message = "Can't find the Visual Studio's path in the regedit"
-            raise cocos.CCPluginError(message)
-
-        msbuildPath = None
-        i = 0
-        try:
-            while True:
-                version = _winreg.EnumKey(msbuild,i)
-                try:
-                    if float(version) >= 4.0:
-                        key = _winreg.OpenKey(msbuild, version)
-                        msbuildPath, type = _winreg.QueryValueEx(
-                            key,
-                            "MSBuildToolsPath"
-                        )
-                except:
-                    pass
-                i += 1
-        except WindowsError:
-            pass
-
-        if msbuildPath is None:
-            message = "Can't find the MSBuildTools' path in the regedit"
-            raise cocos.CCPluginError(message)
-
+        # get the solution file & project name
         cfg_obj = self._platforms.get_current_config()
         if cfg_obj.sln_file is not None:
             sln_name = cfg_obj.sln_file
             if cfg_obj.project_name is None:
-                import cocos_project
                 raise cocos.CCPluginError("Must specified \"%s\" when \"%s\" is specified in file \"%s\"") % \
                       (cocos_project.Win32Config.KEY_PROJECT_NAME, cocos_project.Win32Config.KEY_SLN_FILE, cocos_project.Project.CONFIG)
             else:
@@ -669,16 +566,60 @@ class CCPluginCompile(cocos.CCPlugin):
                 raise cocos.CCPluginError(message)
 
         self.project_name = name
-        msbuildPath = os.path.join(msbuildPath, "MSBuild.exe")
         projectPath = os.path.join(win32_projectdir, sln_name)
+
+        # get the required VS version
+        build_cfg_path = self._build_cfg_path()
+        required_vs_version = self._get_required_vs_version(projectPath)
+        if required_vs_version is None:
+            raise cocos.CCPluginError("Can't parse the sln file to find required VS version")
+
+        cocos.Logging.info("Required VS version : %s" % required_vs_version)
+
+        # get the correct available VS path
+        needUpgrade = False
+        vsPath = None
+        i = 0
+        try:
+            while True:
+                version = _winreg.EnumKey(vs, i)
+                try:
+                    if float(version) >= float(required_vs_version):
+                        key = _winreg.OpenKey(vs, r"SxS\VS7")
+                        vsPath, type = _winreg.QueryValueEx(key, version)
+
+                        if float(version) > float(required_vs_version):
+                            needUpgrade = True
+
+                        break
+                except:
+                    pass
+                i += 1
+        except WindowsError:
+            pass
+
+        if vsPath is None:
+            message = "Can't find correct Visual Studio's path in the regedit"
+            raise cocos.CCPluginError(message)
+
+        commandPath = os.path.join(vsPath, "Common7", "IDE", "devenv")
         build_mode = 'Debug' if self._is_debug_mode() else 'Release'
 
+        # upgrade projects
+        if needUpgrade:
+            commandUpgrade = ' '.join([
+                "\"%s\"" % commandPath,
+                "\"%s\"" % projectPath,
+                "/Upgrade"
+            ])
+            self._run_cmd(commandUpgrade)
+
+        # build the project
         commands = ' '.join([
-            msbuildPath,
-            projectPath,
-            "/maxcpucount:4",
-            "/t:%s" % self.project_name,
-            "/p:configuration=%s" % build_mode
+            "\"%s\"" % commandPath,
+            "\"%s\"" % projectPath,
+            "/Build \"%s|Win32\"" % build_mode,
+            "/Project \"%s\"" % self.project_name
         ])
 
         self._run_cmd(commands)
@@ -719,7 +660,6 @@ class CCPluginCompile(cocos.CCPlugin):
                 shutil.copy(file_path, output_dir)
 
         # copy lua files & res
-        build_cfg_path = self._build_cfg_path()
         build_cfg = os.path.join(build_cfg_path, CCPluginCompile.BUILD_CONFIG_FILE)
         if not os.path.exists(build_cfg):
             message = "%s not found" % build_cfg
@@ -736,7 +676,7 @@ class CCPluginCompile(cocos.CCPlugin):
             fileList = data[CCPluginCompile.CFG_KEY_COPY_RESOURCES]
 
         for cfg in fileList:
-            copy_files_with_config(cfg, build_cfg_path, output_dir)
+            cocos.copy_files_with_config(cfg, build_cfg_path, output_dir)
         
         self.run_root = output_dir
 
@@ -886,14 +826,7 @@ class CCPluginCompile(cocos.CCPlugin):
             self._run_cmd('make -j%s' % self._jobs)
 
         # move file
-        build_mode = self._mode
-        if self._project._is_script_project():
-            if build_mode == 'debug':
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_DEBUG, 'linux')
-            else:
-                output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_SCRIPT_RELEASE, 'linux')
-        else:
-            output_dir = os.path.join(project_dir, CCPluginCompile.OUTPUT_DIR_NATIVE, build_mode, 'linux')
+        output_dir = self._output_dir
 
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
@@ -903,7 +836,7 @@ class CCPluginCompile(cocos.CCPlugin):
             result_dir = os.path.join(build_dir, 'bin', cfg_obj.build_result_dir)
         else:
             result_dir = os.path.join(build_dir, 'bin')
-        copy_files_in_dir(result_dir, output_dir)
+        cocos.copy_files_in_dir(result_dir, output_dir)
 
         self.run_root = output_dir
 
@@ -921,14 +854,23 @@ class CCPluginCompile(cocos.CCPlugin):
                 return name, fullname
         return (None, None)
 
-
     def run(self, argv, dependencies):
         self.parse_args(argv)
         cocos.Logging.info('Building mode: %s' % self._mode)
         self._update_build_cfg()
+
+        target_platform = self._platforms.get_current_platform()
+        args_build_copy = self._custom_step_args.copy()
+
+        # invoke the custom step: pre-build
+        self._project.invoke_custom_step_script(cocos_project.Project.CUSTOM_STEP_PRE_BUILD, target_platform, args_build_copy)
+
         self.build_android()
         self.build_ios()
         self.build_mac()
         self.build_win32()
         self.build_web()
         self.build_linux()
+
+        # invoke the custom step: post-build
+        self._project.invoke_custom_step_script(cocos_project.Project.CUSTOM_STEP_POST_BUILD, target_platform, args_build_copy)

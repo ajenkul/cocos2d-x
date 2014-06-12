@@ -21,6 +21,14 @@ def check_queue_build(action, pr_num, statuses_url):
       if(q_pr_num == pr_num):
         if(action == 'closed') or (q_statuses_url != statuses_url):
           queues.delete_item(queue)
+          target_url = os.environ['JOB_PULL_REQUEST_BUILD_URL']
+          data = {"state":"error", "target_url":target_url}
+          access_token = os.environ['GITHUB_ACCESS_TOKEN']
+          Headers = {"Authorization":"token " + access_token} 
+          try:
+              requests.post(statuses_url, data=json.dumps(data), headers=Headers)
+          except:
+              traceback.print_exc()
 
 def main():
     #get payload from os env
@@ -54,7 +62,10 @@ def main():
     #set commit status to pending
     target_url = os.environ['JOB_PULL_REQUEST_BUILD_URL']
 
-    check_queue_build(action, pr_num, statuses_url)
+    try:    
+        check_queue_build(action, pr_num, statuses_url)
+    except:
+        print 'Can not find build in queue'
     
     if(action == 'closed'):
         print 'pull request #' + str(pr_num) + ' is '+action+', no build triggered'
@@ -66,8 +77,11 @@ def main():
     message = last_commit['commit']['message']
 
     pattern = re.compile("\[ci(\s+)skip\]", re.I)
-    result = pattern.search(message)
-    if result is not None:
+    result_commit_title = pattern.search(message)
+
+    title = pr['title']
+    result_pr_title = pattern.search(title)
+    if result_commit_title is not None or result_pr_title is not None:
         print 'skip build for pull request #' + str(pr_num)
         return(0)
     

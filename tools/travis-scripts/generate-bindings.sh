@@ -23,13 +23,13 @@ ELAPSEDSECS=`date +%s`
 COCOS_BRANCH="update_lua_bindings_$ELAPSEDSECS"
 COCOS_ROBOT_REMOTE="https://${GH_USER}:${GH_PASSWORD}@github.com/${GH_USER}/cocos2d-x.git"
 PULL_REQUEST_REPO="https://api.github.com/repos/cocos2d/cocos2d-x/pulls"
-FETCH_REMOTE_BRANCH="develop"
+FETCH_REMOTE_BRANCH="v3"
 COMMIT_PATH="cocos/scripting/lua-bindings/auto"
 
 # Exit on error
 set -e
 
-if [ "$PLATFORM"x = "ios"x ]; then
+if [ "$PLATFORM"x = "mac-ios"x ]; then
     mkdir -p $HOME/bin
     pushd $HOME/bin
     curl -O http://pyyaml.org/download/pyyaml/PyYAML-3.10.zip
@@ -126,7 +126,7 @@ git remote add upstream "$COCOS_ROBOT_REMOTE" 2> /dev/null > /dev/null
 echo "Pushing to Robot's repo ..."
 git push -fq upstream "$COCOS_BRANCH" 2> /dev/null
 
-# 7. 
+# 7.
 echo "Sending Pull Request to base repo ..."
 curl --user "${GH_USER}:${GH_PASSWORD}" --request POST --data "{ \"title\": \"$COMMITTAG\", \"body\": \"\", \"head\": \"${GH_USER}:${COCOS_BRANCH}\", \"base\": \"${TRAVIS_BRANCH}\"}" "${PULL_REQUEST_REPO}" 2> /dev/null > /dev/null
 
